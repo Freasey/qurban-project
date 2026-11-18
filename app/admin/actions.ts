@@ -206,12 +206,20 @@ export async function selesaikan(f: FormData) {
   await run(back, async () => {
     const tipe = str(f, 'tipe');
     const tanggal = str(f, 'tanggal') || today();
-    const ids = f.getAll('pekurban_id').map((v) => parseInt(String(v), 10)).filter((n) => n > 0);
-    if (!ids.length) throw new Q.UserError('Tidak ada pekurban yang dipilih.');
+    const semua = f.getAll('pekurban_id').map((v) => parseInt(String(v), 10)).filter((n) => n > 0);
+    if (!semua.length) throw new Q.UserError('Tidak ada pekurban yang dipilih.');
+    // Paket gratis D1 membatasi sekitar 50 query per request, jadi diproses maksimal 4 orang per klik.
+    const MAKS = 4;
+    const ids = semua.slice(0, MAKS);
     await tx(async (c) => {
-      for (const id of ids) await Q.selesaikanPekurban(c, id, tipe, tanggal, str(f, 'catatan'));
+      const hasil: string[] = [];
+      for (const id of ids) hasil.push(await Q.selesaikanPekurban(c, id, tipe, tanggal, str(f, 'catatan'), false));
+      await Q.logAksi(c, 'Penyelesaian pekurban', hasil.join('; '));
     });
-    return `${ids.length} pekurban diselesaikan.`;
+    const sisa = semua.length - ids.length;
+    return sisa > 0
+      ? `${ids.length} pekurban diselesaikan. Klik "Selesaikan yang dipilih" lagi untuk ${sisa} pekurban berikutnya.`
+      : `${ids.length} pekurban diselesaikan.`;
   });
 }
 

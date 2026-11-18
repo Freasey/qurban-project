@@ -113,15 +113,14 @@ export async function postJurnal(c: Conn, j: JurnalInput): Promise<number> {
      values ($1,$2,$3,$4,$5,$6,$7) returning id`,
     [j.tanggal, j.keterangan, j.jenis, j.pekurban_id ?? null, j.hewan_id ?? null, j.setoran_id ?? null, j.pembalik_dari ?? null],
   );
-  for (const b of j.baris) {
-    await c.query('insert into jurnal_baris (jurnal_id, akun, pekurban_id, debit, kredit) values ($1,$2,$3,$4,$5)', [
-      r.id,
-      b.akun,
-      b.pekurban_id ?? null,
-      b.debit || 0,
-      b.kredit || 0,
-    ]);
-  }
+  // Semua baris dalam satu query (D1 membatasi jumlah query per request).
+  const vals: unknown[] = [];
+  const ph = j.baris.map((b, i) => {
+    vals.push(r.id, b.akun, b.pekurban_id ?? null, b.debit || 0, b.kredit || 0);
+    const k = i * 5;
+    return `($${k + 1},$${k + 2},$${k + 3},$${k + 4},$${k + 5})`;
+  });
+  await c.query(`insert into jurnal_baris (jurnal_id, akun, pekurban_id, debit, kredit) values ${ph.join(',')}`, vals);
   return r.id;
 }
 
@@ -141,6 +140,15 @@ async function balikJurnal(c: Conn, jurnalId: number, tanggal: string, alasan: s
     baris: baris.map((b) => ({ akun: b.akun, pekurban_id: b.pekurban_id, debit: b.kredit, kredit: b.debit })),
   });
   await c.query('update jurnal set dibalik = true where id = $1', [jurnalId]);
+}
+
+export async function saldoBanyak(c: Conn, ids: number[]): Promise<Map<number, number>> {
+  const rows = await c.query<{ pekurban_id: number; s: number }>(
+    `select pekurban_id, coalesce(sum(kredit - debit), 0) as s from jurnal_baris
+     where akun = $1 and pekurban_id in (select value from json_each($2)) group by pekurban_id`,
+    [AKUN.TITIPAN, JSON.stringify(ids)],
+  );
+  return new Map(rows.map((r) => [r.pekurban_id, Number(r.s)]));
 }
 
 export async function saldoTitipan(c: Conn, pekurbanId: number): Promise<number> {
@@ -418,8 +426,9 @@ export async function sembelihHewan(c: Conn, id: number, tanggal: string) {
   const harga = Number(h.harga_realisasi);
   const porsi = bagiPorsi(harga, peserta.length);
   const kurang: string[] = [];
+  const saldo = await saldoBanyak(c, peserta.map((p) => p.id));
   for (let i = 0; i < peserta.length; i++) {
-    const s = await saldoTitipan(c, peserta[i].id);
+    const s = saldo.get(peserta[i].id) || 0;
     if (s < porsi[i]) kurang.push(`${peserta[i].nama} kurang ${rp(porsi[i] - s)}`);
   }
   if (kurang.length) fail('Saldo belum cukup: ' + kurang.join('; ') + '.');
@@ -437,7 +446,7 @@ export async function sembelihHewan(c: Conn, id: number, tanggal: string) {
   await logAksi(c, 'Catat penyembelihan', `${h.nama}, ${peserta.length} pekurban, porsi ${rp(porsi[0])}`);
 }
 
-export async function selesaikanPekurban(c: Conn, id: number, tipe: string, tanggal: string, catatan = '') {
+export async function selesaikanPekurban(c: Conn, id: number, tipe: string, tanggal: string, catatan = '', catat = true) {
   const p = await getPekurban(c, id, true);
   if (p.status !== 'aktif') fail(`${p.nama} sudah diselesaikan atau batal.`);
   if (!p.hewan_id) fail(`${p.nama} belum ditempatkan di hewan.`);
@@ -473,5 +482,6 @@ export async function selesaikanPekurban(c: Conn, id: number, tipe: string, tang
     jurnalId,
   ]);
   await c.query(`update pekurban set status='selesai' where id=$1`, [id]);
-  await logAksi(c, 'Penyelesaian pekurban', `${p.nama}: ${t} ${rp(sisa)}`);
+  if (catat) await logAksi(c, 'Penyelesaian pekurban', `${p.nama}: ${t} ${rp(sisa)}`);
+  return `${p.nama}: ${t} ${rp(sisa)}`;
 }

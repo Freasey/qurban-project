@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "qurban-project",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "qurban",
+      // Ganti dengan Database ID dari: npx wrangler d1 create qurban
+      "database_id": "GANTI_DENGAN_DATABASE_ID"
+    }
+  ],
+  "vars": {
+    "ADMIN_EMAIL": "admin@masjid.local"
+  }
+  // ADMIN_PASSWORD dan SESSION_SECRET diisi sebagai secret (lihat README), bukan di file ini.
+}

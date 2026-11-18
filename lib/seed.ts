@@ -1,20 +1,12 @@
 import 'server-only';
-import { driver, execChunked, lit, sqliteDriver, type Conn } from './db';
-import { SCHEMA, TABEL_HAPUS, TABEL_SALIN } from './schema';
+import { randomUUID } from 'node:crypto';
+import { batchExec, lit, type Conn } from './db';
 import { addDays, rp, tgl, today } from './format';
+import { AKUN, randomKode } from './qurban';
+import { TABEL_HAPUS } from './schema';
 import { DEFAULT_PENGATURAN } from './settings';
-import {
-  beliHewan,
-  logAksi,
-  simpanBuffer,
-  tambahHewan,
-  tambahPekurban,
-  tambahSetoran,
-  tolakSetoran,
-  verifikasiSetoran,
-} from './qurban';
 
-const HAPUS_SQL = [...TABEL_HAPUS.map((t) => `delete from ${t}`), 'delete from sqlite_sequence'];
+const HAPUS_SQL = [...TABEL_HAPUS.map((t) => `delete from ${t}`), `delete from sqlite_sequence where name in (${TABEL_HAPUS.map(lit).join(', ')})`];
 
 export async function kosongkan(c: Conn) {
   for (const s of HAPUS_SQL) await c.query(s);
@@ -62,11 +54,17 @@ function svgNota(hewan: string, harga: number, tanggal: string): Buffer {
 }
 
 type SeedPk = { nama: string; hp: string; hewan: string | null; verified: number[]; pending?: number[]; ditolak?: [number, string][]; tunai?: boolean };
+type R = Record<string, unknown>;
 
-async function buatDummy(c: Conn) {
+/**
+ * Data dummy disusun langsung di JavaScript (mengikuti aturan posting yang sama dengan aplikasi),
+ * lalu dikirim ke D1 dalam beberapa batch saja. D1 membatasi jumlah query per request,
+ * jadi menyimpan ratusan baris satu per satu tidak memungkinkan.
+ */
+export async function isiDataDummy() {
   const T = today();
+  const nowIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   const rek = `BSI 7123456789 a.n. Panitia Qurban`;
-
   const pengaturan = {
     ...DEFAULT_PENGATURAN,
     namaMasjid: 'Masjid Baitul Makmur',
@@ -85,11 +83,38 @@ async function buatDummy(c: Conn) {
     tanggalSaldoBank: T,
   };
 
-  const hewan: Record<string, number> = {};
-  hewan['Sapi A'] = await tambahHewan(c, { nama: 'Sapi A', jenis: 'sapi', kapasitas: 7, harga_estimasi: 21_000_000, catatan: 'Sapi limousin' });
-  hewan['Sapi B'] = await tambahHewan(c, { nama: 'Sapi B', jenis: 'sapi', kapasitas: 7, harga_estimasi: 22_400_000, catatan: 'Sapi bali' });
-  hewan['Kambing 1'] = await tambahHewan(c, { nama: 'Kambing 1', jenis: 'kambing', kapasitas: 1, harga_estimasi: 3_500_000, catatan: '' });
-  hewan['Kambing 2'] = await tambahHewan(c, { nama: 'Kambing 2', jenis: 'kambing', kapasitas: 1, harga_estimasi: 3_200_000, catatan: '' });
+  const berkas: R[] = [];
+  const hewan: R[] = [];
+  const pekurban: R[] = [];
+  const setoran: R[] = [];
+  const jurnal: R[] = [];
+  const baris: R[] = [];
+  const log: R[] = [];
+
+  const file = (buf: Buffer, nama: string) => {
+    const id = randomUUID();
+    berkas.push({ id, nama, mime: 'image/svg+xml', ukuran: buf.length, isi: buf.toString('base64'), dibuat: nowIso });
+    return id;
+  };
+  const postJurnal = (j: { tanggal: string; keterangan: string; jenis: string; pekurban_id?: number; hewan_id?: number; setoran_id?: number }, b: [string, number | null, number, number][]) => {
+    const id = jurnal.length + 1;
+    jurnal.push({ id, tanggal: j.tanggal, keterangan: j.keterangan, jenis: j.jenis, pekurban_id: j.pekurban_id ?? null, hewan_id: j.hewan_id ?? null, setoran_id: j.setoran_id ?? null, pembalik_dari: null, dibalik: 0, dibuat: nowIso });
+    for (const [akun, pk, debit, kredit] of b) baris.push({ id: baris.length + 1, jurnal_id: id, akun, pekurban_id: pk, debit, kredit });
+  };
+  const noS = (id: number) => 'S-' + String(id).padStart(4, '0');
+
+  const HEWAN: [string, string, number, number, string][] = [
+    ['Sapi A', 'sapi', 7, 21_000_000, 'Sapi limousin'],
+    ['Sapi B', 'sapi', 7, 22_400_000, 'Sapi bali'],
+    ['Kambing 1', 'kambing', 1, 3_500_000, ''],
+    ['Kambing 2', 'kambing', 1, 3_200_000, ''],
+  ];
+  const idHewan: Record<string, number> = {};
+  for (const [nama, jenis, kapasitas, harga, catatan] of HEWAN) {
+    const id = hewan.length + 1;
+    idHewan[nama] = id;
+    hewan.push({ id, nama, jenis, kapasitas, harga_estimasi: harga, harga_realisasi: null, status: 'direncanakan', tgl_beli: null, tgl_sembelih: null, nota_id: null, catatan, dibuat: nowIso });
+  }
 
   const data: SeedPk[] = [
     { nama: 'Ahmad Fauzi', hp: '081311110001', hewan: 'Sapi A', verified: [1_000_000, 1_100_000, 1_000_000] },
@@ -109,79 +134,75 @@ async function buatDummy(c: Conn) {
     { nama: 'Nur Hidayat', hp: '081311110015', hewan: null, verified: [1_000_000] },
   ];
 
+  const kodeDipakai = new Set<string>();
   const kodeContoh: string[] = [];
+  let kas = 0;
+  let menunggu = 0;
   for (const [i, d] of data.entries()) {
-    const { id, kode } = await tambahPekurban(c, {
-      nama: d.nama,
-      hp: d.hp,
+    let kode = randomKode();
+    while (kodeDipakai.has(kode)) kode = randomKode();
+    kodeDipakai.add(kode);
+    const pid = pekurban.length + 1;
+    pekurban.push({
+      id: pid, kode, nama: d.nama, hp: d.hp,
       alamat: `Perumahan Prima Bintara Blok ${String.fromCharCode(65 + (i % 6))}${(i % 9) + 1}`,
-      atas_nama: d.nama.replace(/^Hj\. /, ''),
-      hewan_id: d.hewan ? hewan[d.hewan] : null,
-      catatan: '',
+      atas_nama: d.nama.replace(/^Hj\. /, ''), hewan_id: d.hewan ? idHewan[d.hewan] : null, status: 'aktif', catatan: '', dibuat: nowIso,
     });
-    if (i < 3 || d.pending) kodeContoh.push(`${d.nama}: ${kode}`);
+    if (i < 3) kodeContoh.push(`${d.nama}: ${kode}`);
     const n = d.verified.length;
     for (const [j, nominal] of d.verified.entries()) {
       const tanggal = addDays(T, -(150 - j * Math.floor(120 / Math.max(1, n - 1))) - i);
       const tunai = !!d.tunai;
-      const bukti = tunai ? null : await simpanBuffer(c, svgBukti(d.nama, nominal, tanggal, rek), 'image/svg+xml', 'bukti-dummy.svg');
-      const sid = await tambahSetoran(c, {
-        pekurban_id: id,
-        tanggal,
-        nominal,
-        metode: tunai ? 'tunai' : 'transfer',
-        bukti_id: bukti,
-        sumber: tunai ? 'admin' : 'pekurban',
-        catatan: tunai ? 'Setor tunai ke bendahara setelah kajian' : '',
+      const sid = setoran.length + 1;
+      setoran.push({
+        id: sid, pekurban_id: pid, tanggal, nominal, metode: tunai ? 'tunai' : 'transfer', status: 'terverifikasi', alasan: '',
+        bukti_id: tunai ? null : file(svgBukti(d.nama, nominal, tanggal, rek), 'bukti-dummy.svg'),
+        sumber: tunai ? 'admin' : 'pekurban', catatan: tunai ? 'Setor tunai ke bendahara setelah kajian' : '', dibuat: nowIso, diverifikasi: nowIso,
       });
-      await verifikasiSetoran(c, sid);
+      postJurnal(
+        { tanggal, keterangan: `Setoran ${d.nama} terverifikasi (${noS(sid)}, ${tunai ? 'tunai' : 'transfer'})`, jenis: 'setoran', pekurban_id: pid, setoran_id: sid },
+        [[AKUN.KAS, null, nominal, 0], [AKUN.TITIPAN, pid, 0, nominal]],
+      );
+      kas += nominal;
     }
     for (const [nominal, alasan] of d.ditolak || []) {
       const tanggal = addDays(T, -20);
-      const bukti = await simpanBuffer(c, svgBukti(d.nama, nominal - 50_000, tanggal, rek), 'image/svg+xml', 'bukti-dummy.svg');
-      const sid = await tambahSetoran(c, { pekurban_id: id, tanggal, nominal, metode: 'transfer', bukti_id: bukti, sumber: 'pekurban' });
-      await tolakSetoran(c, sid, alasan);
+      setoran.push({
+        id: setoran.length + 1, pekurban_id: pid, tanggal, nominal, metode: 'transfer', status: 'ditolak', alasan,
+        bukti_id: file(svgBukti(d.nama, nominal - 50_000, tanggal, rek), 'bukti-dummy.svg'), sumber: 'pekurban', catatan: '', dibuat: nowIso, diverifikasi: nowIso,
+      });
     }
     for (const [j, nominal] of (d.pending || []).entries()) {
       const tanggal = addDays(T, -1 - j - (i % 3));
-      const bukti = await simpanBuffer(c, svgBukti(d.nama, nominal, tanggal, rek), 'image/svg+xml', 'bukti-dummy.svg');
-      await tambahSetoran(c, { pekurban_id: id, tanggal, nominal, metode: 'transfer', bukti_id: bukti, sumber: 'pekurban', catatan: 'Cicilan bulan ini' });
+      setoran.push({
+        id: setoran.length + 1, pekurban_id: pid, tanggal, nominal, metode: 'transfer', status: 'menunggu', alasan: '',
+        bukti_id: file(svgBukti(d.nama, nominal, tanggal, rek), 'bukti-dummy.svg'), sumber: 'pekurban', catatan: 'Cicilan bulan ini', dibuat: nowIso, diverifikasi: null,
+      });
+      menunggu += nominal;
     }
   }
 
   // Sapi A sudah dibeli (belum disembelih), supaya alur penyembelihan dan penyelesaian bisa dicoba.
   const tBeli = addDays(T, -4);
-  const nota = await simpanBuffer(c, svgNota('Sapi A', 20_650_000, tBeli), 'image/svg+xml', 'nota-dummy.svg');
-  await beliHewan(c, hewan['Sapi A'], { harga: 20_650_000, tanggal: tBeli, nota_id: nota });
+  const hargaBeli = 20_650_000;
+  Object.assign(hewan[0], { status: 'dibeli', harga_realisasi: hargaBeli, tgl_beli: tBeli, nota_id: file(svgNota('Sapi A', hargaBeli, tBeli), 'nota-dummy.svg') });
+  postJurnal({ tanggal: tBeli, keterangan: 'Pembelian Sapi A (nota terlampir)', jenis: 'beli', hewan_id: 1 }, [[AKUN.PERSEDIAAN, null, hargaBeli, 0], [AKUN.KAS, null, 0, hargaBeli]]);
+  kas -= hargaBeli;
 
   // Saldo bank menurut mutasi = kas sistem + setoran yang belum diverifikasi (sudah masuk rekening).
-  const [k] = await c.query<{ s: number }>(`select coalesce(sum(debit - kredit),0) as s from jurnal_baris where akun = '1-1100'`);
-  const [m] = await c.query<{ s: number }>(`select coalesce(sum(nominal),0) as s from setoran where status = 'menunggu'`);
-  pengaturan.saldoBank = Number(k.s) + Number(m.s);
-  await c.query(`insert into pengaturan (id, data) values (1, $1) on conflict (id) do update set data = excluded.data`, [
-    JSON.stringify(pengaturan),
+  pengaturan.saldoBank = kas + menunggu;
+  log.push({ id: 1, waktu: nowIso, aksi: 'Isi data dummy', detail: `15 pekurban, 4 hewan. Contoh kode: ${kodeContoh.join(', ')}` });
+
+  const ins = (t: string, rows: R[]) => rows.map((r) => `insert into ${t} (${Object.keys(r).join(', ')}) values (${Object.values(r).map(lit).join(', ')})`);
+  await batchExec([
+    ...HAPUS_SQL,
+    `insert into pengaturan (id, data) values (1, ${lit(JSON.stringify(pengaturan))}) on conflict (id) do update set data = excluded.data`,
+    ...ins('berkas', berkas),
+    ...ins('hewan', hewan),
+    ...ins('pekurban', pekurban),
+    ...ins('setoran', setoran),
+    ...ins('jurnal', jurnal),
+    ...ins('jurnal_baris', baris),
+    ...ins('log_aktivitas', log),
   ]);
-  await logAksi(c, 'Isi data dummy', `15 pekurban, 4 hewan. Contoh kode: ${kodeContoh.slice(0, 3).join(', ')}`);
-}
-
-/**
- * Data dummy dibangun dulu di SQLite memori (memakai logika yang sama dengan aplikasi),
- * lalu disalin ke database utama dalam beberapa request saja. Jauh lebih cepat untuk D1 via HTTP.
- */
-export async function isiDataDummy() {
-  const staging = await sqliteDriver(':memory:');
-  await staging.exec(SCHEMA);
-  await staging.tx((c) => buatDummy(c));
-
-  const stmts: string[] = [...HAPUS_SQL];
-  const [peng] = await staging.query<{ data: string }>('select data from pengaturan where id = 1');
-  stmts.push(`insert into pengaturan (id, data) values (1, ${lit(peng.data)}) on conflict (id) do update set data = excluded.data`);
-  for (const t of TABEL_SALIN) {
-    const rows = await staging.query(`select * from ${t} order by rowid`);
-    for (const r of rows) {
-      const cols = Object.keys(r);
-      stmts.push(`insert into ${t} (${cols.join(', ')}) values (${cols.map((k) => lit(r[k])).join(', ')})`);
-    }
-  }
-  await execChunked(await driver(), stmts);
 }

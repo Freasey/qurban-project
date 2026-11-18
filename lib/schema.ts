@@ -14,7 +14,7 @@ export const TABEL_HAPUS = [
 ];
 export const TABEL_SALIN = ['berkas', 'hewan', 'pekurban', 'setoran', 'jurnal', 'jurnal_baris', 'penyelesaian', 'log_aktivitas'];
 
-export const SCHEMA = `
+const SQL = `
 create table if not exists pengaturan (
   id integer primary key,
   data text not null default '{}'
@@ -112,3 +112,5 @@ create index if not exists jb_jurnal_idx on jurnal_baris(jurnal_id);
 create index if not exists jb_akun_pk_idx on jurnal_baris(akun, pekurban_id);
 create index if not exists pekurban_hewan_idx on pekurban(hewan_id);
 `;
+
+export const SCHEMA: string[] = SQL.split(';').map((x) => x.trim()).filter(Boolean);

@@ -61,5 +61,5 @@ export async function requireAdmin() {
 
 export async function clientIp(): Promise<string> {
   const h = await headers();
-  return (h.get('x-forwarded-for') || h.get('x-real-ip') || 'lokal').split(',')[0].trim();
+  return (h.get('cf-connecting-ip') || h.get('x-forwarded-for') || h.get('x-real-ip') || 'lokal').split(',')[0].trim();
 }
