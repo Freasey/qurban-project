@@ -76,7 +76,7 @@ export function UploadInput({ name, required, label = 'Pilih foto' }: { name: st
     if (!f) return;
     if (f.type === 'application/pdf') {
       setInfo(`${f.name} (${Math.round(f.size / 1024)} KB)`);
-      if (f.size > 3 * 1024 * 1024) { setInfo('PDF terlalu besar, maksimal 3 MB.'); input.value = ''; }
+      if (f.size > 1_400_000) { setInfo('PDF terlalu besar, maksimal 1,4 MB.'); input.value = ''; }
       return;
     }
     if (!f.type.startsWith('image/')) { setInfo('Pilih foto (JPG/PNG) atau PDF.'); input.value = ''; return; }
@@ -121,7 +121,7 @@ async function compress(file: File): Promise<File> {
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(bmp, 0, 0, w, h);
   const blob: Blob = await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('blob'))), 'image/jpeg', 0.8));
-  if (blob.size >= file.size && file.size <= 3 * 1024 * 1024 && ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return file;
+  if (blob.size >= file.size && file.size <= 1_400_000 && ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return file;
   return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
 }
 

@@ -22,7 +22,7 @@ export default async function SetoranPage({ searchParams }: { searchParams: Prom
   const where: string[] = [];
   const params: unknown[] = [];
   if (f !== 'semua') { params.push(f); where.push(`s.status = $${params.length}`); }
-  if (cari) { params.push(`%${cari}%`); where.push(`(p.nama ilike $${params.length} or p.kode ilike $${params.length})`); }
+  if (cari) { params.push(`%${cari}%`); where.push(`(p.nama like $${params.length} or p.kode like $${params.length})`); }
   const [rows, pekurban] = await Promise.all([
     listSetoran(where.length ? 'where ' + where.join(' and ') : '', params),
     listPekurban(`where p.status = 'aktif'`),

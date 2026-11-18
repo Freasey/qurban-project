@@ -36,15 +36,19 @@ export const DEFAULT_PENGATURAN: Pengaturan = {
 };
 
 export async function getPengaturan(): Promise<Pengaturan> {
-  const r = await one<{ data: Partial<Pengaturan> }>('select data from pengaturan where id = 1');
-  return { ...DEFAULT_PENGATURAN, ...(r?.data || {}) };
+  const r = await one<{ data: string }>('select data from pengaturan where id = 1');
+  let data: Partial<Pengaturan> = {};
+  try {
+    data = r?.data ? JSON.parse(r.data) : {};
+  } catch {}
+  return { ...DEFAULT_PENGATURAN, ...data };
 }
 
 export async function setPengaturan(p: Partial<Pengaturan>) {
   const cur = await getPengaturan();
   const data = { ...cur, ...p };
   await q(
-    `insert into pengaturan (id, data) values (1, $1::jsonb)
+    `insert into pengaturan (id, data) values (1, $1)
      on conflict (id) do update set data = excluded.data`,
     [JSON.stringify(data)],
   );

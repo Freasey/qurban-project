@@ -22,9 +22,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   }
   if (!boleh) return new Response('Tidak diizinkan', { status: 403 });
 
-  const f = await one<{ mime: string; isi: Uint8Array; nama: string }>('select mime, isi, nama from berkas where id = $1', [id]);
+  const f = await one<{ mime: string; isi: string; nama: string }>('select mime, isi, nama from berkas where id = $1', [id]);
   if (!f) return new Response('Tidak ditemukan', { status: 404 });
-  const body = new Uint8Array(f.isi);
+  const body = new Uint8Array(Buffer.from(f.isi, 'base64'));
   return new Response(body, {
     headers: {
       'Content-Type': f.mime,

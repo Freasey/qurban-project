@@ -32,8 +32,8 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
   const baris = ids.length
     ? await q<any>(
         `select b.*, p.nama as pk_nama from jurnal_baris b left join pekurban p on p.id = b.pekurban_id
-         where b.jurnal_id = any($1::int[]) order by b.jurnal_id, b.kredit > 0, b.id`,
-        [ids],
+         where b.jurnal_id in (select value from json_each($1)) order by b.jurnal_id, b.kredit > 0, b.id`,
+        [JSON.stringify(ids)],
       )
     : [];
   const byJ = new Map<number, any[]>();
@@ -72,8 +72,8 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
                         {j.keterangan}
                         <div className="row" style={{ marginTop: 4 }}>
                           <span className="chip neutral">{JENIS[j.jenis] ?? j.jenis}</span>
-                          {j.dibalik && <span className="chip bad">Sudah dibalik</span>}
-                          {j.pembalik_dari && <span className="chip wait">Pembalik {noJ(j.pembalik_dari)}</span>}
+                          {!!j.dibalik && <span className="chip bad">Sudah dibalik</span>}
+                          {!!j.pembalik_dari && <span className="chip wait">Pembalik {noJ(j.pembalik_dari)}</span>}
                         </div>
                       </>
                     )}

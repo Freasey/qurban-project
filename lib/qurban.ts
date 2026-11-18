@@ -64,7 +64,8 @@ export async function logAksi(c: Conn, aksi: string, detail = '') {
 // ---------------------------------------------------------------- berkas
 
 export const MIME_OK = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-export const MAX_BERKAS = 3 * 1024 * 1024;
+// D1 membatasi ukuran satu nilai ±2 MB; berkas disimpan base64 (+33%).
+export const MAX_BERKAS = 1_400_000;
 
 export async function simpanBerkas(c: Conn, file: File | null | undefined, wajib = false): Promise<string | null> {
   if (!file || typeof file === 'string' || file.size === 0) {
@@ -72,7 +73,7 @@ export async function simpanBerkas(c: Conn, file: File | null | undefined, wajib
     return null;
   }
   if (!MIME_OK.includes(file.type)) fail('Format berkas harus JPG, PNG, WEBP, atau PDF.');
-  if (file.size > MAX_BERKAS) fail('Ukuran berkas maksimal 3 MB.');
+  if (file.size > MAX_BERKAS) fail('Ukuran berkas maksimal 1,4 MB. Foto otomatis dikecilkan; untuk PDF, kompres dulu.');
   const buf = Buffer.from(await file.arrayBuffer());
   return simpanBuffer(c, buf, file.type, file.name);
 }
@@ -84,7 +85,7 @@ export async function simpanBuffer(c: Conn, buf: Buffer, mime: string, nama = ''
     nama.slice(0, 200),
     mime,
     buf.length,
-    buf,
+    buf.toString('base64'),
   ]);
   return id;
 }
@@ -125,7 +126,7 @@ export async function postJurnal(c: Conn, j: JurnalInput): Promise<number> {
 }
 
 async function balikJurnal(c: Conn, jurnalId: number, tanggal: string, alasan: string, jenis: string) {
-  const [j] = await c.query('select * from jurnal where id = $1 for update', [jurnalId]);
+  const [j] = await c.query('select * from jurnal where id = $1', [jurnalId]);
   if (!j) fail('Jurnal tidak ditemukan.');
   if (j.dibalik) fail('Jurnal ini sudah pernah dibalik.');
   const baris = await c.query('select * from jurnal_baris where jurnal_id = $1 order by id', [jurnalId]);
@@ -144,7 +145,7 @@ async function balikJurnal(c: Conn, jurnalId: number, tanggal: string, alasan: s
 
 export async function saldoTitipan(c: Conn, pekurbanId: number): Promise<number> {
   const [r] = await c.query<{ s: number }>(
-    `select coalesce(sum(kredit - debit), 0)::bigint as s from jurnal_baris where akun = $1 and pekurban_id = $2`,
+    `select coalesce(sum(kredit - debit), 0) as s from jurnal_baris where akun = $1 and pekurban_id = $2`,
     [AKUN.TITIPAN, pekurbanId],
   );
   return Number(r?.s || 0);
@@ -153,18 +154,18 @@ export async function saldoTitipan(c: Conn, pekurbanId: number): Promise<number>
 // ---------------------------------------------------------------- pekurban
 
 async function getPekurban(c: Conn, id: number, lock = false) {
-  const [p] = await c.query(`select * from pekurban where id = $1 ${lock ? 'for update' : ''}`, [id]);
+  const [p] = await c.query(`select * from pekurban where id = $1`, [id]);
   if (!p) fail('Pekurban tidak ditemukan.');
   return p;
 }
 async function getHewan(c: Conn, id: number, lock = false) {
-  const [h] = await c.query(`select * from hewan where id = $1 ${lock ? 'for update' : ''}`, [id]);
+  const [h] = await c.query(`select * from hewan where id = $1`, [id]);
   if (!h) fail('Hewan tidak ditemukan.');
   return h;
 }
 async function jumlahPeserta(c: Conn, hewanId: number, kecuali?: number): Promise<number> {
   const [r] = await c.query<{ n: number }>(
-    `select count(*)::int as n from pekurban where hewan_id = $1 and status <> 'batal' and id <> $2`,
+    `select count(*) as n from pekurban where hewan_id = $1 and status <> 'batal' and id <> $2`,
     [hewanId, kecuali ?? 0],
   );
   return r.n;
@@ -220,7 +221,7 @@ export async function gantiKode(c: Conn, id: number): Promise<string> {
 
 export async function hapusPekurban(c: Conn, id: number) {
   const p = await getPekurban(c, id, true);
-  const [r] = await c.query<{ n: number }>('select count(*)::int as n from setoran where pekurban_id = $1', [id]);
+  const [r] = await c.query<{ n: number }>('select count(*) as n from setoran where pekurban_id = $1', [id]);
   if (r.n > 0) fail('Pekurban yang sudah punya riwayat setoran tidak bisa dihapus. Gunakan "Batalkan pekurban".');
   await c.query('delete from pekurban where id = $1', [id]);
   await logAksi(c, 'Hapus pekurban', `${p.nama} (${p.kode})`);
@@ -274,12 +275,12 @@ export async function tambahSetoran(
 }
 
 export async function verifikasiSetoran(c: Conn, id: number) {
-  const [s] = await c.query('select * from setoran where id = $1 for update', [id]);
+  const [s] = await c.query('select * from setoran where id = $1', [id]);
   if (!s) fail('Setoran tidak ditemukan.');
   if (s.status !== 'menunggu') fail('Setoran ini sudah diproses.');
   const p = await getPekurban(c, s.pekurban_id);
   if (p.status !== 'aktif') fail('Pekurban sudah tidak aktif.');
-  await c.query(`update setoran set status='terverifikasi', diverifikasi=now() where id=$1`, [id]);
+  await c.query(`update setoran set status='terverifikasi', diverifikasi=strftime('%Y-%m-%dT%H:%M:%SZ','now') where id=$1`, [id]);
   await postJurnal(c, {
     tanggal: s.tanggal,
     keterangan: `Setoran ${p.nama} terverifikasi (S-${String(id).padStart(4, '0')}, ${s.metode})`,
@@ -295,16 +296,16 @@ export async function verifikasiSetoran(c: Conn, id: number) {
 }
 
 export async function tolakSetoran(c: Conn, id: number, alasan: string) {
-  const [s] = await c.query('select s.*, p.nama from setoran s join pekurban p on p.id=s.pekurban_id where s.id = $1 for update of s', [id]);
+  const [s] = await c.query('select s.*, p.nama from setoran s join pekurban p on p.id=s.pekurban_id where s.id = $1', [id]);
   if (!s) fail('Setoran tidak ditemukan.');
   if (s.status !== 'menunggu') fail('Setoran ini sudah diproses.');
   if (!alasan.trim()) fail('Tuliskan alasan penolakan supaya pekurban tahu apa yang harus diperbaiki.');
-  await c.query(`update setoran set status='ditolak', alasan=$2, diverifikasi=now() where id=$1`, [id, alasan.trim()]);
+  await c.query(`update setoran set status='ditolak', alasan=$2, diverifikasi=strftime('%Y-%m-%dT%H:%M:%SZ','now') where id=$1`, [id, alasan.trim()]);
   await logAksi(c, 'Tolak setoran', `S-${String(id).padStart(4, '0')} ${s.nama}: ${alasan}`);
 }
 
 export async function batalkanVerifikasi(c: Conn, id: number, alasan: string) {
-  const [s] = await c.query('select * from setoran where id = $1 for update', [id]);
+  const [s] = await c.query('select * from setoran where id = $1', [id]);
   if (!s) fail('Setoran tidak ditemukan.');
   if (s.status !== 'terverifikasi') fail('Hanya setoran terverifikasi yang bisa dibatalkan.');
   if (!alasan.trim()) fail('Tuliskan alasan pembatalan.');
@@ -412,7 +413,7 @@ export async function sembelihHewan(c: Conn, id: number, tanggal: string) {
   const h = await getHewan(c, id, true);
   if (h.status !== 'dibeli') fail('Catat pembelian hewan terlebih dahulu.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || tanggal > today()) fail('Tanggal penyembelihan tidak valid.');
-  const peserta = await c.query(`select * from pekurban where hewan_id=$1 and status='aktif' order by id for update`, [id]);
+  const peserta = await c.query(`select * from pekurban where hewan_id=$1 and status='aktif' order by id`, [id]);
   if (!peserta.length) fail('Belum ada pekurban di hewan ini.');
   const harga = Number(h.harga_realisasi);
   const porsi = bagiPorsi(harga, peserta.length);
@@ -442,7 +443,7 @@ export async function selesaikanPekurban(c: Conn, id: number, tipe: string, tang
   if (!p.hewan_id) fail(`${p.nama} belum ditempatkan di hewan.`);
   const h = await getHewan(c, p.hewan_id);
   if (h.status !== 'disembelih') fail('Penyelesaian dilakukan setelah hewan disembelih.');
-  const [m] = await c.query<{ n: number }>(`select count(*)::int as n from setoran where pekurban_id=$1 and status='menunggu'`, [id]);
+  const [m] = await c.query<{ n: number }>(`select count(*) as n from setoran where pekurban_id=$1 and status='menunggu'`, [id]);
   if (m.n > 0) fail(`${p.nama} masih punya setoran menunggu verifikasi. Proses dulu sebelum diselesaikan.`);
   const sisa = await saldoTitipan(c, id);
   if (sisa < 0) fail('Saldo titipan minus, periksa jurnal.');

@@ -1,5 +1,6 @@
 import 'server-only';
-import type { Conn } from './db';
+import { driver, execChunked, lit, sqliteDriver, type Conn } from './db';
+import { SCHEMA, TABEL_HAPUS, TABEL_SALIN } from './schema';
 import { addDays, rp, tgl, today } from './format';
 import { DEFAULT_PENGATURAN } from './settings';
 import {
@@ -13,10 +14,10 @@ import {
   verifikasiSetoran,
 } from './qurban';
 
+const HAPUS_SQL = [...TABEL_HAPUS.map((t) => `delete from ${t}`), 'delete from sqlite_sequence'];
+
 export async function kosongkan(c: Conn) {
-  await c.query(
-    'truncate penyelesaian, jurnal_baris, jurnal, setoran, pekurban, hewan, berkas, log_aktivitas, batas_akses restart identity cascade',
-  );
+  for (const s of HAPUS_SQL) await c.query(s);
 }
 
 function esc(s: string) {
@@ -62,8 +63,7 @@ function svgNota(hewan: string, harga: number, tanggal: string): Buffer {
 
 type SeedPk = { nama: string; hp: string; hewan: string | null; verified: number[]; pending?: number[]; ditolak?: [number, string][]; tunai?: boolean };
 
-export async function isiDataDummy(c: Conn) {
-  await kosongkan(c);
+async function buatDummy(c: Conn) {
   const T = today();
   const rek = `BSI 7123456789 a.n. Panitia Qurban`;
 
@@ -155,11 +155,33 @@ export async function isiDataDummy(c: Conn) {
   await beliHewan(c, hewan['Sapi A'], { harga: 20_650_000, tanggal: tBeli, nota_id: nota });
 
   // Saldo bank menurut mutasi = kas sistem + setoran yang belum diverifikasi (sudah masuk rekening).
-  const [k] = await c.query<{ s: number }>(`select coalesce(sum(debit - kredit),0)::bigint as s from jurnal_baris where akun = '1-1100'`);
-  const [m] = await c.query<{ s: number }>(`select coalesce(sum(nominal),0)::bigint as s from setoran where status = 'menunggu'`);
+  const [k] = await c.query<{ s: number }>(`select coalesce(sum(debit - kredit),0) as s from jurnal_baris where akun = '1-1100'`);
+  const [m] = await c.query<{ s: number }>(`select coalesce(sum(nominal),0) as s from setoran where status = 'menunggu'`);
   pengaturan.saldoBank = Number(k.s) + Number(m.s);
-  await c.query(`insert into pengaturan (id, data) values (1, $1::jsonb) on conflict (id) do update set data = excluded.data`, [
+  await c.query(`insert into pengaturan (id, data) values (1, $1) on conflict (id) do update set data = excluded.data`, [
     JSON.stringify(pengaturan),
   ]);
   await logAksi(c, 'Isi data dummy', `15 pekurban, 4 hewan. Contoh kode: ${kodeContoh.slice(0, 3).join(', ')}`);
+}
+
+/**
+ * Data dummy dibangun dulu di SQLite memori (memakai logika yang sama dengan aplikasi),
+ * lalu disalin ke database utama dalam beberapa request saja. Jauh lebih cepat untuk D1 via HTTP.
+ */
+export async function isiDataDummy() {
+  const staging = await sqliteDriver(':memory:');
+  await staging.exec(SCHEMA);
+  await staging.tx((c) => buatDummy(c));
+
+  const stmts: string[] = [...HAPUS_SQL];
+  const [peng] = await staging.query<{ data: string }>('select data from pengaturan where id = 1');
+  stmts.push(`insert into pengaturan (id, data) values (1, ${lit(peng.data)}) on conflict (id) do update set data = excluded.data`);
+  for (const t of TABEL_SALIN) {
+    const rows = await staging.query(`select * from ${t} order by rowid`);
+    for (const r of rows) {
+      const cols = Object.keys(r);
+      stmts.push(`insert into ${t} (${cols.join(', ')}) values (${cols.map((k) => lit(r[k])).join(', ')})`);
+    }
+  }
+  await execChunked(await driver(), stmts);
 }

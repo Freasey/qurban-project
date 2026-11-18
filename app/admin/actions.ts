@@ -248,7 +248,7 @@ export async function simpanSaldoBank(f: FormData) {
 export async function isiDummy() {
   await requireAdmin();
   await run('/admin/pengaturan', async () => {
-    await tx((c) => isiDataDummy(c));
+    await isiDataDummy();
     return { to: '/admin', ok: 'Data dummy berhasil diisi: 15 pekurban, 4 hewan, dan riwayat setoran.' };
   });
 }

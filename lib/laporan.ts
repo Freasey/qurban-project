@@ -9,7 +9,7 @@ export async function dataLaporan() {
     listHewan(),
     saldoAkun(),
     q<{ pekurban_id: number; s: number }>(
-      `select b.pekurban_id, sum(b.debit)::bigint as s from jurnal_baris b join jurnal j on j.id = b.jurnal_id
+      `select b.pekurban_id, sum(b.debit) as s from jurnal_baris b join jurnal j on j.id = b.jurnal_id
        join pekurban p on p.id = b.pekurban_id
        where j.jenis = 'refund' and p.status = 'batal' and b.akun = '${AKUN.TITIPAN}' group by b.pekurban_id`,
     ),

@@ -1,94 +1,110 @@
+// Skema SQLite (Cloudflare D1). Waktu disimpan sebagai teks ISO UTC, tanggal sebagai 'YYYY-MM-DD'.
+const NOW = `(strftime('%Y-%m-%dT%H:%M:%SZ','now'))`;
+
+export const TABEL_HAPUS = [
+  'penyelesaian',
+  'jurnal_baris',
+  'jurnal',
+  'setoran',
+  'pekurban',
+  'hewan',
+  'berkas',
+  'log_aktivitas',
+  'batas_akses',
+];
+export const TABEL_SALIN = ['berkas', 'hewan', 'pekurban', 'setoran', 'jurnal', 'jurnal_baris', 'penyelesaian', 'log_aktivitas'];
+
 export const SCHEMA = `
 create table if not exists pengaturan (
-  id int primary key default 1,
-  data jsonb not null default '{}'::jsonb
+  id integer primary key,
+  data text not null default '{}'
 );
 create table if not exists berkas (
   id text primary key,
   nama text not null default '',
   mime text not null,
-  ukuran int not null,
-  isi bytea not null,
-  dibuat timestamptz not null default now()
+  ukuran integer not null,
+  isi text not null,
+  dibuat text not null default ${NOW}
 );
 create table if not exists hewan (
-  id serial primary key,
+  id integer primary key autoincrement,
   nama text not null,
   jenis text not null,
-  kapasitas int not null,
-  harga_estimasi bigint not null,
-  harga_realisasi bigint,
+  kapasitas integer not null,
+  harga_estimasi integer not null,
+  harga_realisasi integer,
   status text not null default 'direncanakan',
-  tgl_beli date,
-  tgl_sembelih date,
+  tgl_beli text,
+  tgl_sembelih text,
   nota_id text references berkas(id),
   catatan text not null default '',
-  dibuat timestamptz not null default now()
+  dibuat text not null default ${NOW}
 );
 create table if not exists pekurban (
-  id serial primary key,
+  id integer primary key autoincrement,
   kode text not null unique,
   nama text not null,
   hp text not null default '',
   alamat text not null default '',
   atas_nama text not null default '',
-  hewan_id int references hewan(id),
+  hewan_id integer references hewan(id),
   status text not null default 'aktif',
   catatan text not null default '',
-  dibuat timestamptz not null default now()
+  dibuat text not null default ${NOW}
 );
 create table if not exists setoran (
-  id serial primary key,
-  pekurban_id int not null references pekurban(id),
-  tanggal date not null,
-  nominal bigint not null check (nominal > 0),
+  id integer primary key autoincrement,
+  pekurban_id integer not null references pekurban(id),
+  tanggal text not null,
+  nominal integer not null check (nominal > 0),
   metode text not null,
   status text not null default 'menunggu',
   alasan text not null default '',
   bukti_id text references berkas(id),
   sumber text not null,
   catatan text not null default '',
-  dibuat timestamptz not null default now(),
-  diverifikasi timestamptz
+  dibuat text not null default ${NOW},
+  diverifikasi text
 );
 create table if not exists jurnal (
-  id serial primary key,
-  tanggal date not null,
+  id integer primary key autoincrement,
+  tanggal text not null,
   keterangan text not null,
   jenis text not null,
-  pekurban_id int references pekurban(id),
-  hewan_id int references hewan(id),
-  setoran_id int references setoran(id),
-  pembalik_dari int references jurnal(id),
-  dibalik boolean not null default false,
-  dibuat timestamptz not null default now()
+  pekurban_id integer references pekurban(id),
+  hewan_id integer references hewan(id),
+  setoran_id integer references setoran(id),
+  pembalik_dari integer references jurnal(id),
+  dibalik integer not null default 0,
+  dibuat text not null default ${NOW}
 );
 create table if not exists jurnal_baris (
-  id serial primary key,
-  jurnal_id int not null references jurnal(id) on delete cascade,
+  id integer primary key autoincrement,
+  jurnal_id integer not null references jurnal(id) on delete cascade,
   akun text not null,
-  pekurban_id int references pekurban(id),
-  debit bigint not null default 0,
-  kredit bigint not null default 0
+  pekurban_id integer references pekurban(id),
+  debit integer not null default 0,
+  kredit integer not null default 0
 );
 create table if not exists penyelesaian (
-  pekurban_id int primary key references pekurban(id),
+  pekurban_id integer primary key references pekurban(id),
   tipe text not null,
-  nominal bigint not null,
-  tanggal date not null,
+  nominal integer not null,
+  tanggal text not null,
   catatan text not null default '',
-  jurnal_id int references jurnal(id)
+  jurnal_id integer references jurnal(id)
 );
 create table if not exists log_aktivitas (
-  id serial primary key,
-  waktu timestamptz not null default now(),
+  id integer primary key autoincrement,
+  waktu text not null default ${NOW},
   aksi text not null,
   detail text not null default ''
 );
 create table if not exists batas_akses (
   kunci text primary key,
-  jumlah int not null,
-  mulai timestamptz not null
+  jumlah integer not null,
+  mulai text not null
 );
 create index if not exists setoran_pk_idx on setoran(pekurban_id);
 create index if not exists setoran_status_idx on setoran(status);

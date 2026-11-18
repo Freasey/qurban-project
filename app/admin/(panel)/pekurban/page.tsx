@@ -19,7 +19,7 @@ export default async function PekurbanList({ searchParams }: { searchParams: Pro
   if (st !== 'semua') { params.push(st); where.push(`p.status = $${params.length}`); }
   if (hw === 'none') where.push('p.hewan_id is null');
   else if (hw) { params.push(parseInt(hw, 10) || 0); where.push(`p.hewan_id = $${params.length}`); }
-  if (cari) { params.push(`%${cari}%`); where.push(`(p.nama ilike $${params.length} or p.kode ilike $${params.length} or p.hp ilike $${params.length})`); }
+  if (cari) { params.push(`%${cari}%`); where.push(`(p.nama like $${params.length} or p.kode like $${params.length} or p.hp like $${params.length})`); }
   const [rows, hewan, s, origin] = await Promise.all([
     listPekurban(where.length ? 'where ' + where.join(' and ') : '', params),
     listHewan(),
