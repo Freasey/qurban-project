@@ -13,12 +13,11 @@
     {
       "binding": "DB",
       "database_name": "qurban",
-      // Ganti dengan Database ID dari: npx wrangler d1 create qurban
-      "database_id": "GANTI_DENGAN_DATABASE_ID"
+      "database_id": "af7cdb26-3917-49c8-8c68-fa90287818e9"
     }
   ],
-  "vars": {
-    "ADMIN_EMAIL": "admin@masjid.local"
-  }
-  // ADMIN_PASSWORD dan SESSION_SECRET diisi sebagai secret (lihat README), bukan di file ini.
+  // ADMIN_EMAIL, ADMIN_PASSWORD, dan SESSION_SECRET diisi di dashboard Cloudflare
+  // (Workers & Pages → qurban-project → Settings → Variables and Secrets).
+  // keep_vars: deploy berikutnya tidak menghapus variabel yang diisi lewat dashboard.
+  "keep_vars": true
 }

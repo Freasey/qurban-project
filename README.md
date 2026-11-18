@@ -22,12 +22,13 @@ Aplikasi tabungan qurban masjid: pekurban cek saldo dan konfirmasi setoran cukup
 
 | Nama | Tempat | Keterangan |
 | --- | --- | --- |
-| `DB` | `wrangler.jsonc` → `d1_databases` | Binding Cloudflare D1. Isi `database_id` dengan ID database D1 |
-| `ADMIN_EMAIL` | `wrangler.jsonc` → `vars` | Email admin (satu-satunya akun) |
-| `ADMIN_PASSWORD` | Secret Worker | Password admin, disimpan apa adanya (tanpa hash) |
-| `SESSION_SECRET` | Secret Worker | Opsional, kunci tambahan untuk cookie sesi |
+| `DB` | `wrangler.jsonc` → `d1_databases` | Binding Cloudflare D1 (database `qurban`) |
+| `ADMIN_EMAIL` | Env Worker (dashboard) | Email admin (satu-satunya akun) |
+| `ADMIN_PASSWORD` | Env Worker (dashboard) | Password admin, disimpan apa adanya (tanpa hash) |
+| `SESSION_SECRET` | Env Worker (dashboard) | Opsional, kunci tambahan untuk cookie sesi |
 
-Ganti password: Cloudflare → Workers & Pages → `qurban-project` → Settings → Variables and Secrets → edit `ADMIN_PASSWORD`.
+Ganti email/password: Cloudflare → Workers & Pages → `qurban-project` → Settings → Variables and Secrets → edit `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+`wrangler.jsonc` memakai `keep_vars: true`, jadi variabel dari dashboard tidak terhapus saat deploy ulang.
 Semua sesi admin lama otomatis keluar.
 
 ## Deploy ke Cloudflare Workers
@@ -37,10 +38,10 @@ Semua sesi admin lama otomatis keluar.
 2. **Hubungkan repo**: Workers & Pages → Create → Import a repository → pilih repo ini.
    - Build command: `npx opennextjs-cloudflare build`
    - Deploy command: `npx opennextjs-cloudflare deploy`
-3. **Secret**: Settings → Variables and Secrets → tambah `ADMIN_PASSWORD` (dan opsional `SESSION_SECRET`) dengan tipe *Secret*.
+3. **Env**: Settings → Variables and Secrets → tambah `ADMIN_EMAIL`, `ADMIN_PASSWORD` (dan opsional `SESSION_SECRET`).
 4. **Domain**: Settings → Domains & Routes → Add → Custom domain → `qurban.worksell.id`.
 
-Atau lewat CLI: `npx wrangler login`, `npx wrangler secret put ADMIN_PASSWORD`, lalu `npm run deploy`.
+Atau lewat CLI: `npx wrangler login`, `npx wrangler secret put ADMIN_EMAIL`, `npx wrangler secret put ADMIN_PASSWORD`, lalu `npm run deploy`.
 
 Tabel dibuat otomatis saat aplikasi pertama kali diakses. Bukti transfer dan nota disimpan di D1 (base64, maks 1,4 MB per berkas;
 foto otomatis dikompres di browser).
@@ -49,7 +50,7 @@ foto otomatis dikompres di browser).
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars   # isi ADMIN_PASSWORD
+cp .dev.vars.example .dev.vars   # isi ADMIN_EMAIL dan ADMIN_PASSWORD
 npm run dev                      # Next.js dev + D1 lokal (miniflare, folder .wrangler/)
 npm run preview                  # build OpenNext lalu jalankan di runtime Workers lokal
 ```

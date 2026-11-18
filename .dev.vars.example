@@ -1,3 +1,4 @@
 # Untuk development lokal (npm run dev / npm run preview). Salin menjadi .dev.vars
+ADMIN_EMAIL=admin@masjid.local
 ADMIN_PASSWORD=ganti-password-ini
 SESSION_SECRET=
